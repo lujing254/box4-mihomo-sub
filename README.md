@@ -11,7 +11,7 @@
 ## 它能做什么
 
 - **全 App 透明代理**：走的是 iptables TPROXY 内核层劫持 TCP/UDP，不是 VpnService。所有 App 流量自动出网，包括 Telegram、WhatsApp、YouTube、Netflix、ChatGPT、Google Play、X（Twitter）、Instagram、TikTok 这些**不认系统代理**的 App
-- **手机直接当旁路由**：热点（ap / wlan / ncm / usb）与局域网流量一起接管，连着手机热点的笔记本、平板、电视盒子、另一台手机，**不用逐台设代理**就能出网
+- **手机直接当旁路由**：热点（ap / wlan / ncm / usb）与局域网流量一起接管，连着手机热点的笔记本、平板、电视盒子、另一台手机，**不用逐台设代理**就能出网；需要手动设代理的场合，填 `手机IP:7890`（HTTP / SOCKS5 混合端口）
 - **不占系统 VPN 槽**：不需要 VpnService，能和公司 VPN、WireGuard、Tailscale 同时开，互不冲突
 - **智能分流**：GEOSITE cn + GEOIP CN 国内直连；`192.168` / `10` / `172.16` / `100.64` 局域网直连（NAS、路由器、ZeroTier、Tailscale、树莓派都算）；其余走代理组
 - **DNS 防污染**：fake-ip 模式 + DoH 分流，google / youtube / telegram / github / openai 各自指定 DoH，减少 DNS 泄漏
@@ -89,7 +89,7 @@ sh /data/adb/box/box sub                         # 按 sub.txt 里那一行
   - `🚀 自动` = `url-test`，按延迟自动挑节点，节点挂了自动换
   - `🎯 选择` = 手动指定，默认跟随自动组，点具体节点即可固定
 - 订阅：`interval: 21600`（6 小时）自动更新，`health-check` 每 10 分钟探活
-- 端口：mixed `7890` / redir `7891` / tproxy `1536` / 面板 `9090`
+- 端口：`7890` 混合代理端口（HTTP + SOCKS5，**局域网设备只填这个**）/ `7891` redir 内部用 / `1536` tproxy 内部用 / `9090` 面板（浏览器访问 `/ui`）
 
 ### 一键开关（在网页里点）
 
