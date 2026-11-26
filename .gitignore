@@ -1,0 +1,11 @@
+# 任何真实订阅链接 / 节点 / 本机路径都不许进仓库
+*.bak
+*.bak2
+providers/
+cache.db
+run.log
+*.log
+dist/
+.vscode/
+.DS_Store
+Thumbs.db

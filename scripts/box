@@ -1,0 +1,263 @@
+#!/system/bin/sh
+# box4 统一入口
+#   sh box             看状态（开关去网页 http://127.0.0.1:7895 点按钮）
+#   sh box on / off
+#   sh box sub [链接]   填订阅（不带参数则读 /data/adb/box/sub.txt）
+#   sh box status
+#   sh box iface hotspot on|off    接口代理开关（mobile/wifi/hotspot/usb）
+#   sh box webui on|off|status     订阅设置页面（浏览器打开 127.0.0.1:7895）
+
+BOX=/data/adb/box
+SCRIPTS=$BOX/scripts
+STATE=$BOX/run/state
+LOG=$BOX/run/last_action.log
+SUB_FILE=$BOX/sub.txt
+CFG=$BOX/mihomo/config.yaml
+PANEL=http://127.0.0.1:9090/ui
+WEB=http://127.0.0.1:7895
+WEBPID=$BOX/run/webui.pid
+
+mkdir -p $BOX/run
+
+find_busybox() {
+  for b in /data/adb/ksu/bin/busybox /data/adb/magisk/busybox /system/xbin/busybox ; do
+    [ -x "$b" ] && { echo "$b" ; return 0 ; }
+  done
+  command -v busybox 2>/dev/null
+}
+BB=$(find_busybox)
+
+say() { echo "$1" ; echo "$1" >> "$LOG" ; }
+
+find_service_dir() {
+  for d in /data/adb/ksu/service.d /data/adb/service.d /data/adb/ap/service.d ; do
+    [ -f "$d/box4_watchdog.sh" ] && { echo "$d" ; return 0 ; }
+  done
+  echo /data/adb/service.d
+}
+
+kill_watchdog() {
+  i=0
+  while [ $i -lt 3 ] ; do
+    pids=$(ps -A -o PID,ARGS 2>/dev/null | grep box4_watchdog | grep -v grep | awk '{print $1}')
+    [ -z "$pids" ] && pids=$(ps -A 2>/dev/null | grep box4_watchdog | grep -v grep | awk '{print $2}')
+    [ -z "$pids" ] && return 0
+    for p in $pids ; do kill -9 "$p" 2>/dev/null ; done
+    sleep 1
+    i=$((i + 1))
+  done
+}
+
+kill_core() {
+  pids=$(pidof mihomo)
+  [ -z "$pids" ] && { rm -f $BOX/run/mihomo.pid ; return 0 ; }
+  for p in $pids ; do kill "$p" 2>/dev/null ; done
+  sleep 1
+  for p in $(pidof mihomo) ; do kill -9 "$p" 2>/dev/null ; done
+  rm -f $BOX/run/mihomo.pid
+}
+
+# 兜底清理：上游 stop 偶尔只清了链、留下 PREROUTING/OUTPUT 的跳转
+force_clean() {
+  for i in 1 2 3 4 ; do
+    iptables -t mangle -D PREROUTING -p tcp -j PROXY_PREROUTING 2>/dev/null
+    iptables -t mangle -D PREROUTING -p udp -j PROXY_PREROUTING 2>/dev/null
+    iptables -t mangle -D PREROUTING -j PROXY_PREROUTING 2>/dev/null
+    iptables -t mangle -D OUTPUT -p tcp -j PROXY_OUTPUT 2>/dev/null
+    iptables -t mangle -D OUTPUT -p udp -j PROXY_OUTPUT 2>/dev/null
+    iptables -t mangle -D OUTPUT -j PROXY_OUTPUT 2>/dev/null
+    iptables -t mangle -D PREROUTING -p tcp -m socket -j DIVERT 2>/dev/null
+    iptables -t mangle -D OUTPUT -p tcp -m socket -j DIVERT 2>/dev/null
+  done
+  for c in PROXY_PREROUTING PROXY_OUTPUT DIVERT PROXY_IP BYPASS_IP BYPASS_INTERFACE \
+           PROXY_INTERFACE DNS_HIJACK_PRE DNS_HIJACK_OUT APP_CHAIN MAC_CHAIN \
+           BOX_LOCAL BOX_EXTERNAL LOCAL_IP_V4 LOCAL_IP_V6 CLASH_DNS_LOCAL CLASH_DNS_EXTERNAL ; do
+    iptables -t mangle -F "$c" 2>/dev/null
+    iptables -t mangle -X "$c" 2>/dev/null
+    iptables -t nat -F "$c" 2>/dev/null
+    iptables -t nat -X "$c" 2>/dev/null
+  done
+  ip rule del fwmark 0x14 lookup 2025 2>/dev/null
+  ip route flush table 2025 2>/dev/null
+}
+
+start_watchdog() {
+  kill_watchdog
+  sd=$(find_service_dir)
+  [ -f "$sd/box4_watchdog.sh" ] && ( setsid sh "$sd/box4_watchdog.sh" </dev/null >/dev/null 2>&1 & )
+}
+
+do_on() {
+  : > $LOG
+  rm -f $BOX/manual $BOX/pause $BOX/pauseall
+  kill_core
+  $SCRIPTS/box.tproxy -d "$SCRIPTS" stop >/dev/null 2>&1
+  force_clean
+  $SCRIPTS/box.service start >/dev/null 2>&1
+  sleep 3
+  $SCRIPTS/box.tproxy -d "$SCRIPTS" start >/dev/null 2>&1
+  start_watchdog
+  echo on > $STATE
+  pid=$(pidof mihomo)
+  if [ -n "$pid" ] ; then
+    say "[box4] 已开启"
+    say "  内核 PID : $pid"
+    say "  面板     : $WEB"
+    say "  节点面板 : $PANEL"
+    webui_on >/dev/null 2>&1
+  else
+    say "[box4] 启动失败，看 $BOX/run/run.log 与 run_error.log"
+  fi
+}
+
+do_off() {
+  : > $LOG
+  touch $BOX/manual
+  rm -f $BOX/pause $BOX/pauseall
+  kill_watchdog
+  $SCRIPTS/box.tproxy -d "$SCRIPTS" stop >/dev/null 2>&1
+  force_clean
+  $SCRIPTS/box.service stop >/dev/null 2>&1
+  kill_core
+  echo off > $STATE
+  say "[box4] 已彻底关闭（内核 / 规则 / 看门狗 全停，开机不自启）"
+}
+
+read_sub_file() {
+  [ -f "$SUB_FILE" ] || return 1
+  grep -v '^[[:space:]]*#' "$SUB_FILE" 2>/dev/null | grep -v '^[[:space:]]*$' | head -1 | tr -d '\r' | sed 's/[[:space:]]*$//'
+}
+
+do_sub() {
+  newurl="$1"
+  [ -z "$newurl" ] && newurl=$(read_sub_file)
+  if [ -z "$newurl" ] ; then
+    say "[box4] 还没有订阅链接"
+    say "  填法：把链接写进 $SUB_FILE，或执行 sh box sub \"https://...\""
+    return 1
+  fi
+  case "$newurl" in
+    http*) ;;
+    *) say "[box4] 订阅链接必须以 http 开头" ; return 1 ;;
+  esac
+  [ -f "$CFG" ] || { say "[box4] 找不到 $CFG" ; return 1 ; }
+
+  echo "$newurl" > "$SUB_FILE"
+  chmod 644 "$SUB_FILE"
+  cp -f "$CFG" "$CFG.bak"
+  awk -v url="$newurl" '
+    BEGIN{inb=0}
+    /^proxy-providers:/ {inb=1; print; next}
+    /^[^ ]/ {inb=0}
+    inb && /^    url: / {print "    url: \"" url "\""; next}
+    {print}
+  ' "$CFG" > "$CFG.tmp" && mv -f "$CFG.tmp" "$CFG"
+
+  rm -f $BOX/mihomo/cache.db $BOX/manual
+  $SCRIPTS/box.tproxy -d "$SCRIPTS" stop >/dev/null 2>&1
+  force_clean
+  $SCRIPTS/box.service stop >/dev/null 2>&1
+  sleep 1
+  $SCRIPTS/box.service start >/dev/null 2>&1
+  sleep 5
+  $SCRIPTS/box.tproxy -d "$SCRIPTS" start >/dev/null 2>&1
+  start_watchdog
+  echo on > $STATE
+  say "[box4] 订阅已保存"
+  if [ -s $BOX/mihomo/providers/at.yaml ] ; then
+    n=$(grep -c 'name:' $BOX/mihomo/providers/at.yaml 2>/dev/null)
+    say "  节点 : $n 个"
+  else
+    say "  节点 : 没下载下来，检查链接是否可用"
+  fi
+  webui_on >/dev/null 2>&1
+}
+
+do_iface() {
+  name="$1" ; val="$2"
+  case "$name" in
+    mobile)  var=PROXY_MOBILE ;;
+    wifi)    var=PROXY_WIFI ;;
+    hotspot) var=PROXY_HOTSPOT ;;
+    usb)     var=PROXY_USB ;;
+    *) say "[box4] 未知接口：$name（可用 mobile / wifi / hotspot / usb）" ; return 1 ;;
+  esac
+  case "$val" in
+    on|1)  v=1 ;;
+    off|0) v=0 ;;
+    *) say "[box4] 值必须是 on/off" ; return 1 ;;
+  esac
+  sed -i "s/^$var=.*/$var=$v/" $SCRIPTS/tproxy.conf
+  say "[box4] $name -> $v"
+  if pidof mihomo >/dev/null 2>&1 ; then
+    $SCRIPTS/box.tproxy -d "$SCRIPTS" restart >/dev/null 2>&1
+    say "  已重启转发规则生效"
+  fi
+}
+
+webui_pid() {
+  ps -A -o PID,ARGS 2>/dev/null | grep "httpd -f -p 7895" | grep -v grep | awk '{print $1}' | head -1
+}
+
+webui_status() {
+  p=$(cat $WEBPID 2>/dev/null)
+  if [ -n "$p" ] && kill -0 "$p" 2>/dev/null ; then
+    echo "running $p"
+    return 0
+  fi
+  p=$(webui_pid)
+  if [ -n "$p" ] ; then
+    echo "$p" > $WEBPID
+    echo "running $p"
+  else
+    echo "stopped"
+  fi
+}
+
+webui_on() {
+  [ -n "$BB" ] || { echo "没有 busybox，起不了页面" ; return 1 ; }
+  [ "$(webui_status | cut -d' ' -f1)" = "running" ] && { echo "已在运行" ; return 0 ; }
+  mkdir -p $BOX/webroot
+  ( setsid "$BB" httpd -f -p 7895 -h "$BOX/webroot" </dev/null >/dev/null 2>&1 & )
+  sleep 1
+  p=$(webui_pid)
+  [ -n "$p" ] && echo "$p" > $WEBPID
+  echo "订阅页 : $WEB"
+}
+
+webui_off() {
+  p=$(cat $WEBPID 2>/dev/null)
+  [ -n "$p" ] && kill "$p" 2>/dev/null
+  for q in $(ps -A -o PID,ARGS 2>/dev/null | grep "httpd -f -p 7895" | grep -v grep | awk '{print $1}') ; do kill "$q" 2>/dev/null ; done
+  rm -f $WEBPID
+  echo "已停止"
+}
+
+do_status() {
+  say "[box4] 状态"
+  say "  state    : $(cat $STATE 2>/dev/null)"
+  say "  标记     : $(ls $BOX/manual 2>/dev/null)"
+  say "  内核 PID : $(pidof mihomo)"
+  say "  节点数   : $(grep -c 'name:' $BOX/mihomo/providers/at.yaml 2>/dev/null)"
+  say "  订阅链接 : $(read_sub_file 2>/dev/null)"
+  say "  接口开关 : mobile=$(grep '^PROXY_MOBILE=' $SCRIPTS/tproxy.conf | cut -d= -f2) wifi=$(grep '^PROXY_WIFI=' $SCRIPTS/tproxy.conf | cut -d= -f2) hotspot=$(grep '^PROXY_HOTSPOT=' $SCRIPTS/tproxy.conf | cut -d= -f2) usb=$(grep '^PROXY_USB=' $SCRIPTS/tproxy.conf | cut -d= -f2)"
+  say "  面板状态 : $(webui_status)"
+}
+
+act="$1"
+case "$act" in
+  on)     do_on ;;
+  off)    do_off ;;
+  sub)    shift ; do_sub "$1" ;;
+  iface)  shift ; do_iface "$1" "$2" ;;
+  webui)  shift ; case "$1" in on) webui_on ;; off) webui_off ;; *) webui_status ;; esac ;;
+  status) do_status ;;
+  "")
+    do_status
+    say "  开关     : 打开 $WEB 点「开启 / 彻底关闭」"
+    ;;
+  *)
+    say "[box4] 用法：sh box [on|off|sub|iface|webui|status]"
+    exit 1
+    ;;
+esac

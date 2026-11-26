@@ -1,0 +1,65 @@
+mixed-port: 7890
+allow-lan: true
+bind-address: '*'
+mode: rule
+ipv6: false
+geodata-mode: true
+geo-auto-update: false
+redir-port: 7891
+tproxy-port: 1536
+tun:
+  enable: false
+  stack: system
+profile:
+  store-selected: false
+log-level: info
+external-controller: '0.0.0.0:9090'
+external-ui: '/data/adb/box/mihomo/ui'
+external-controller-cors:
+  allow-origins: ['*']
+  allow-private-network: true
+unified-delay: false
+tcp-concurrent: true
+dns:
+  enable: true
+  ipv6: false
+  listen: 0.0.0.0:1053
+  default-nameserver: [223.5.5.5, 119.29.29.29]
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter: ['*.lan', '*.local', '*.localhost', '*.test', localhost.ptlogin2.qq.com, '+.stun.*.*', '*.srv.nintendo.net', 'xbox.*.*.microsoft.com', '*.*.xboxlive.com', +.msftncsi.com, +.msftconnecttest.com]
+  nameserver: ['https://223.5.5.5/dns-query#DIRECT', 'https://doh.pub/dns-query#DIRECT']
+  proxy-server-nameserver: ['https://223.5.5.5/dns-query#DIRECT', 'https://doh.pub/dns-query#DIRECT']
+  direct-nameserver: ['https://223.5.5.5/dns-query#DIRECT', 'https://doh.pub/dns-query#DIRECT']
+  nameserver-policy: { '+.google.com': ['https://dns.google/dns-query#🎯 选择'], '+.googleapis.com': ['https://dns.google/dns-query#🎯 选择'], '+.googleusercontent.com': ['https://dns.google/dns-query#🎯 选择'], '+.gstatic.com': ['https://dns.google/dns-query#🎯 选择'], '+.youtube.com': ['https://dns.google/dns-query#🎯 选择'], '+.googlevideo.com': ['https://dns.google/dns-query#🎯 选择'], '+.googleadservices.com': ['https://dns.google/dns-query#🎯 选择'], '+.github.com': ['https://dns.cloudflare.com/dns-query#🎯 选择'], '+.githubusercontent.com': ['https://dns.cloudflare.com/dns-query#🎯 选择'], '+.openai.com': ['https://dns.cloudflare.com/dns-query#🎯 选择'], '+.chatgpt.com': ['https://dns.cloudflare.com/dns-query#🎯 选择'], '+.twitter.com': ['https://dns.cloudflare.com/dns-query#🎯 选择'], '+.x.com': ['https://dns.cloudflare.com/dns-query#🎯 选择'], '+.facebook.com': ['https://dns.cloudflare.com/dns-query#🎯 选择'], '+.instagram.com': ['https://dns.cloudflare.com/dns-query#🎯 选择'], '+.netflix.com': ['https://dns.cloudflare.com/dns-query#🎯 选择'], '+.telegram.org': ['https://dns.cloudflare.com/dns-query#🎯 选择'], '+.t.me': ['https://dns.cloudflare.com/dns-query#🎯 选择'], '+.tiktok.com': ['https://dns.google/dns-query#🎯 选择'], '+.tiktokv.com': ['https://dns.google/dns-query#🎯 选择'], '+.tiktokv.us': ['https://dns.google/dns-query#🎯 选择'], '+.tiktokcdn.com': ['https://dns.google/dns-query#🎯 选择'], '+.tiktokcdn-us.com': ['https://dns.google/dns-query#🎯 选择'], '+.ibytedtos.com': ['https://dns.google/dns-query#🎯 选择'], '+.byteoversea.com': ['https://dns.google/dns-query#🎯 选择'] }
+  respect-rules: false
+proxy-providers:
+  AT:
+    type: http
+    url: "__SUB_URL__"
+    path: ./providers/at.yaml
+    interval: 21600
+    health-check:
+      enable: true
+      url: https://www.gstatic.com/generate_204
+      interval: 600
+proxy-groups:
+  - name: 🎯 选择
+    type: select
+    use: [AT]
+    proxies: [🚀 自动]
+  - name: 🚀 自动
+    type: url-test
+    use: [AT]
+    url: https://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+rules:
+  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve
+  - GEOSITE,cn,DIRECT
+  - GEOIP,CN,DIRECT
+  - MATCH,🎯 选择

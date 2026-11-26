@@ -1,0 +1,62 @@
+#!/system/bin/sh
+# box4 订阅设置页面的后端（busybox httpd CGI）
+BOX=/data/adb/box
+BB=$(for b in /data/adb/ksu/bin/busybox /data/adb/magisk/busybox /system/xbin/busybox ; do [ -x "$b" ] && { echo "$b" ; break ; } ; done)
+
+json_escape() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\r\n'
+}
+
+param() {
+  printf '%s' "$1" | tr '&' '\n' | sed -n "s/^$2=//p" | head -1
+}
+
+act=$(param "$QUERY_STRING" act)
+
+echo 'Content-Type: application/json; charset=utf-8'
+echo 'Cache-Control: no-store'
+echo
+
+case "$act" in
+  status)
+    state=$(cat $BOX/run/state 2>/dev/null)
+    pid=$(pidof mihomo)
+    nodes=$(grep -c 'name:' $BOX/mihomo/providers/at.yaml 2>/dev/null)
+    sub=$(grep -v '^[[:space:]]*#' $BOX/sub.txt 2>/dev/null | grep -v '^[[:space:]]*$' | head -1)
+    m=$(grep '^PROXY_MOBILE=' $BOX/scripts/tproxy.conf | cut -d= -f2)
+    w=$(grep '^PROXY_WIFI=' $BOX/scripts/tproxy.conf | cut -d= -f2)
+    h=$(grep '^PROXY_HOTSPOT=' $BOX/scripts/tproxy.conf | cut -d= -f2)
+    u=$(grep '^PROXY_USB=' $BOX/scripts/tproxy.conf | cut -d= -f2)
+    printf '{"ok":true,"state":"%s","pid":"%s","nodes":"%s","sub":"%s","mobile":"%s","wifi":"%s","hotspot":"%s","usb":"%s"}\n' \
+      "$(json_escape "$state")" "$(json_escape "$pid")" "$(json_escape "$nodes")" \
+      "$(json_escape "$sub")" "$m" "$w" "$h" "$u"
+    ;;
+  sub)
+    body=$(cat)
+    if [ -z "$body" ] ; then
+      printf '{"ok":false,"msg":"没有收到链接"}\n'
+      exit 0
+    fi
+    out=$(sh $BOX/box sub "$body" 2>&1)
+    nodes=$(grep -c 'name:' $BOX/mihomo/providers/at.yaml 2>/dev/null)
+    printf '{"ok":true,"nodes":"%s","msg":"%s","out":"%s"}\n' \
+      "$(json_escape "$nodes")" "$(json_escape "订阅已保存")" "$(json_escape "$out")"
+    ;;
+  on)
+    out=$(sh $BOX/box on 2>&1)
+    printf '{"ok":true,"out":"%s"}\n' "$(json_escape "$out")"
+    ;;
+  off)
+    out=$(sh $BOX/box off 2>&1)
+    printf '{"ok":true,"out":"%s"}\n' "$(json_escape "$out")"
+    ;;
+  iface)
+    name=$(param "$QUERY_STRING" name)
+    value=$(param "$QUERY_STRING" value)
+    out=$(sh $BOX/box iface "$name" "$value" 2>&1)
+    printf '{"ok":true,"out":"%s"}\n' "$(json_escape "$out")"
+    ;;
+  *)
+    printf '{"ok":false,"msg":"unknown action"}\n'
+    ;;
+esac
